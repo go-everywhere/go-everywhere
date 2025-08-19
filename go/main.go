@@ -1,3 +1,5 @@
+//go:build !js
+
 package main
 
 import (
@@ -16,12 +18,6 @@ func main() {
 	app.Route("/", func() app.Composer { return &views.Home{} })
 	app.Route("/generate", func() app.Composer { return &views.Generate{} })
 	app.Route("/models", func() app.Composer { return &views.Models{} })
-
-	app.RunWhenOnBrowser()
-
-	if app.IsClient {
-		return
-	}
 
 	db, client := database()
 
