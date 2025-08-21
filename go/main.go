@@ -15,16 +15,15 @@ import (
 )
 
 func main() {
-	app.Route("/", func() app.Composer { return &views.Home{} })
-	app.Route("/generate", func() app.Composer { return &views.Generate{} })
-	app.Route("/models", func() app.Composer { return &views.Models{} })
-
 	db, client := database()
 
-	http.HandleFunc("/api/generate", api.Generate(client))
+	app.Route("/", func() app.Composer { return &views.Home{DB: client} })
+	app.Route("/profile", func() app.Composer { return &views.Profile{DB: client} })
+
+	http.HandleFunc("/api/generate", api.UpdateProfile(client))
 	http.Handle("/", &app.Handler{
-		Name:        "Assette",
-		Description: "An asset creator for Indies",
+		Name:        "Go PWA",
+		Description: "A Go PWA template",
 	})
 
 	signalChan := make(chan os.Signal, 1)

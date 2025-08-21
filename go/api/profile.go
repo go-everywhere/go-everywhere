@@ -8,8 +8,7 @@ import (
 	"github.com/olric-data/olric"
 )
 
-// https://replicate.com/firtoz/trellis
-func Generate(db *olric.EmbeddedClient) func(w http.ResponseWriter, r *http.Request) {
+func UpdateProfile(db *olric.EmbeddedClient) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Hello!"))
 	}

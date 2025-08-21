@@ -4,15 +4,17 @@ import (
 	"assette/widgets"
 
 	"github.com/maxence-charriere/go-app/v10/pkg/app"
+	"github.com/olric-data/olric"
 )
 
-type Models struct {
+type Profile struct {
 	app.Compo
+	DB *olric.EmbeddedClient
 }
 
-func (h *Models) Render() app.UI {
+func (h *Profile) Render() app.UI {
 	return app.Section().Body(
 		&widgets.Header{},
-		app.H1().Text("Models page"),
+		app.H1().Text("Profile page"),
 	)
 }
