@@ -35,8 +35,8 @@ assette/
 │   ├── web/               # Compiled WASM output
 │   │   └── app.wasm       # WebAssembly binary
 │   └── Makefile           # Build commands
-└── python/                # Alternative Python implementation (reference)
-
+├── CLAUDE.md              # AI assistant development guide
+└── README.md              # Project documentation
 ```
 
 ## Key Features
