@@ -5,61 +5,103 @@ package main
 import (
 	"assette/db"
 	"context"
+	"fmt"
 	"log"
+	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
-	"github.com/olric-data/olric"
-	"github.com/olric-data/olric/config"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/embed"
 )
 
-func database() (*olric.Olric, *db.Client) {
-	// local, lan, wan
-	c := config.New("lan")
+func database() (*embed.Etcd, *clientv3.Client, *db.Client) {
+	// Create data directory for etcd
+	dataDir := filepath.Join(os.TempDir(), "etcd-data")
+	os.RemoveAll(dataDir) // Clean up any previous data
 
-	// Callback function. It's called when this node is ready to accept connections.
-	ctx, cancel := context.WithCancel(context.Background())
-	c.Started = func() {
-		defer cancel()
-		log.Println("[INFO] Olric is ready to accept connections")
-	}
+	cfg := embed.NewConfig()
+	cfg.Dir = dataDir
+	cfg.LogLevel = "error" // Reduce log verbosity
 
-	// Create a new Olric instance.
-	olricDB, err := olric.New(c)
+	// Configure listening URLs
+	lcurl, _ := url.Parse("http://127.0.0.1:2379")
+	cfg.ListenClientUrls = []url.URL{*lcurl}
+	cfg.AdvertiseClientUrls = []url.URL{*lcurl}
+
+	lpurl, _ := url.Parse("http://127.0.0.1:2380")
+	cfg.ListenPeerUrls = []url.URL{*lpurl}
+	cfg.AdvertisePeerUrls = []url.URL{*lpurl}
+
+	cfg.InitialCluster = fmt.Sprintf("default=%s", lpurl.String())
+
+	// Disable strict reconfiguration check
+	cfg.StrictReconfigCheck = false
+
+	// Start embedded etcd
+	e, err := embed.StartEtcd(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create Olric instance: %v", err)
+		log.Fatalf("Failed to start embedded etcd: %v", err)
 	}
 
-	// Start the instance. It will form a single-node cluster.
-	go func() {
-		// Call Start at background. It's a blocker call.
-		err = olricDB.Start()
-		if err != nil {
-			log.Fatalf("olric.Start returned an error: %v", err)
-		}
-	}()
+	// Wait for etcd to be ready
+	select {
+	case <-e.Server.ReadyNotify():
+		log.Println("[INFO] Embedded etcd is ready to accept connections")
+	case <-time.After(10 * time.Second):
+		e.Server.Stop()
+		log.Fatalf("Embedded etcd took too long to start")
+	}
 
-	<-ctx.Done()
-	
-	embedded := olricDB.NewEmbeddedClient()
-	
-	// Initialize DMaps
-	db.InitializeDMaps(embedded)
-	
-	// Create and return our client wrapper
-	client := db.NewClient(embedded)
-	
-	return olricDB, client
-}
+	// Create client connection to embedded etcd
+	clientConfig := clientv3.Config{
+		Endpoints:   []string{"127.0.0.1:2379"},
+		DialTimeout: 5 * time.Second,
+	}
 
-func shutdown(db *olric.Olric) {
-	// Don't forget the call Shutdown when you want to leave the cluster.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	etcdClient, err := clientv3.New(clientConfig)
+	if err != nil {
+		e.Server.Stop()
+		log.Fatalf("Failed to create etcd client: %v", err)
+	}
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := db.Shutdown(ctx)
+	_, err = etcdClient.Get(ctx, "health-check")
 	if err != nil {
-		log.Printf("Failed to shutdown Olric: %v", err)
+		log.Printf("[WARNING] etcd connection test failed: %v", err)
 	}
 
-	log.Println("[DONE] Olric DB shutdown")
+	// Initialize namespaces
+	client := db.NewClient(etcdClient)
+	db.InitializeNamespaces(client)
+
+	return e, etcdClient, client
+}
+
+func shutdown(e *embed.Etcd, client *clientv3.Client) {
+	// Close client connection first
+	if client != nil {
+		err := client.Close()
+		if err != nil {
+			log.Printf("Failed to close etcd client: %v", err)
+		}
+	}
+
+	// Stop embedded etcd server
+	if e != nil {
+		e.Server.Stop()
+		e.Close()
+
+		// Clean up data directory
+		cfg := e.Config()
+		if cfg.Dir != "" {
+			os.RemoveAll(cfg.Dir)
+		}
+	}
+
+	log.Println("[DONE] Embedded etcd shutdown")
 }

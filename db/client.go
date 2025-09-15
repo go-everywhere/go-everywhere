@@ -4,72 +4,93 @@ package db
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"time"
 
-	"github.com/olric-data/olric"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 type Client struct {
-	embedded *olric.EmbeddedClient
-	dmaps    map[string]olric.DMap
+	etcdClient *clientv3.Client
 }
 
-func NewClient(embedded *olric.EmbeddedClient) *Client {
+func NewClient(etcdClient *clientv3.Client) *Client {
 	return &Client{
-		embedded: embedded,
-		dmaps:    make(map[string]olric.DMap),
+		etcdClient: etcdClient,
 	}
 }
 
-func (c *Client) GetDMap(name string) (olric.DMap, error) {
-	if dm, exists := c.dmaps[name]; exists {
-		return dm, nil
-	}
-	
-	dm, err := c.embedded.NewDMap(name)
-	if err != nil {
-		return nil, err
-	}
-	
-	c.dmaps[name] = dm
-	return dm, nil
-}
-
-func (c *Client) Users() (olric.DMap, error) {
-	return c.GetDMap("users")
-}
-
-func (c *Client) Put(ctx context.Context, dmap string, key string, value interface{}) error {
-	dm, err := c.GetDMap(dmap)
+func (c *Client) Put(ctx context.Context, namespace string, key string, value interface{}) error {
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	return dm.Put(ctx, key, value)
+
+	fullKey := fmt.Sprintf("/%s/%s", namespace, key)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err = c.etcdClient.Put(ctx, fullKey, string(data))
+	return err
 }
 
-func (c *Client) Get(ctx context.Context, dmap string, key string) (*olric.GetResponse, error) {
-	dm, err := c.GetDMap(dmap)
+func (c *Client) Get(ctx context.Context, namespace string, key string) ([]byte, error) {
+	fullKey := fmt.Sprintf("/%s/%s", namespace, key)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.etcdClient.Get(ctx, fullKey)
 	if err != nil {
 		return nil, err
 	}
-	return dm.Get(ctx, key)
+
+	if len(resp.Kvs) == 0 {
+		return nil, ErrKeyNotFound
+	}
+
+	return resp.Kvs[0].Value, nil
 }
 
-func (c *Client) Delete(ctx context.Context, dmap string, key string) (int, error) {
-	dm, err := c.GetDMap(dmap)
+func (c *Client) Delete(ctx context.Context, namespace string, key string) (int64, error) {
+	fullKey := fmt.Sprintf("/%s/%s", namespace, key)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.etcdClient.Delete(ctx, fullKey)
 	if err != nil {
 		return 0, err
 	}
-	return dm.Delete(ctx, key)
+
+	return resp.Deleted, nil
 }
 
-func InitializeDMaps(client *olric.EmbeddedClient) {
-	c := NewClient(client)
-	
-	// Pre-create DMaps
-	if _, err := c.Users(); err != nil {
-		log.Printf("Warning: Failed to create users DMap: %v", err)
+func (c *Client) GetAll(ctx context.Context, namespace string) (map[string][]byte, error) {
+	prefix := fmt.Sprintf("/%s/", namespace)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.etcdClient.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
 	}
-	
-	// Add other DMaps here as needed
+
+	result := make(map[string][]byte)
+	for _, kv := range resp.Kvs {
+		// Remove the namespace prefix from the key
+		key := string(kv.Key)[len(prefix):]
+		result[key] = kv.Value
+	}
+
+	return result, nil
+}
+
+func (c *Client) Close() error {
+	return c.etcdClient.Close()
+}
+
+func InitializeNamespaces(client *Client) {
+	// Pre-create namespaces if needed (etcd doesn't require this, but keeping for compatibility)
+	log.Println("[INFO] etcd client initialized with namespaces support")
 }

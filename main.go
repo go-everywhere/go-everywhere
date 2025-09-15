@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	olricDB, client := database()
+	embeddedEtcd, etcdClient, client := database()
 
 	app.Route("/", func() app.Composer { return &views.Home{} })
 	app.Route("/profile", func() app.Composer { return &views.Profile{} })
@@ -38,5 +38,5 @@ func main() {
 	}()
 
 	<-signalChan
-	shutdown(olricDB)
+	shutdown(embeddedEtcd, etcdClient)
 }

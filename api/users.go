@@ -11,8 +11,6 @@ import (
 
 	"assette/db"
 	"assette/models"
-
-	"github.com/olric-data/olric"
 )
 
 // CreateUser creates a new user
@@ -31,14 +29,8 @@ func CreateUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 
 		// Generate a simple ID (in production, use UUID or similar)
 		userID := fmt.Sprintf("user:%d", generateID())
-		
-		userData, err := json.Marshal(user)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		
-		if err := client.Put(context.Background(), "users", userID, userData); err != nil {
+
+		if err := client.Put(context.Background(), "users", userID, user); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -49,7 +41,7 @@ func CreateUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 			"name":  user.Name,
 			"email": user.Email,
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(response)
@@ -72,19 +64,12 @@ func GetUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) {
 		}
 		userID := pathParts[3]
 
-		res, err := client.Get(context.Background(), "users", userID)
+		userData, err := client.Get(context.Background(), "users", userID)
 		if err != nil {
-			if err == olric.ErrKeyNotFound {
+			if err == db.ErrKeyNotFound {
 				http.Error(w, "User not found", http.StatusNotFound)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		var userData []byte
-		err = res.Scan(&userData)
-		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -115,28 +100,19 @@ func ListUsers(client *db.Client) func(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Since we can't iterate over keys in this version of Olric,
-		// we'll maintain a list of user IDs separately or use a fixed range
-		// For demo purposes, we'll check a reasonable range of IDs
+		// Get all users from the users namespace
+		usersData, err := client.GetAll(context.Background(), "users")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		users := []map[string]interface{}{}
-		
-		for i := 1; i <= 100; i++ {
-			userID := fmt.Sprintf("user:%d", i)
-			res, err := client.Get(context.Background(), "users", userID)
-			if err != nil {
-				continue // User doesn't exist, skip
-			}
-
-			var userData []byte
-			err = res.Scan(&userData)
-			if err != nil {
-				continue
-			}
-
+		for userID, userData := range usersData {
 			var user models.User
 			err = json.Unmarshal(userData, &user)
 			if err != nil {
-				continue
+				continue // Skip malformed user data
 			}
 
 			users = append(users, map[string]interface{}{
@@ -173,7 +149,7 @@ func UpdateUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 		// Check if user exists
 		_, err := client.Get(context.Background(), "users", userID)
 		if err != nil {
-			if err == olric.ErrKeyNotFound {
+			if err == db.ErrKeyNotFound {
 				http.Error(w, "User not found", http.StatusNotFound)
 				return
 			}
@@ -187,13 +163,7 @@ func UpdateUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		userData, err := json.Marshal(user)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		
-		if err := client.Put(context.Background(), "users", userID, userData); err != nil {
+		if err := client.Put(context.Background(), "users", userID, user); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -225,16 +195,10 @@ func DeleteUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 		}
 		userID := pathParts[3]
 
-		dm, err := client.GetDMap("users")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
 		// Check if user exists
-		_, err = dm.Get(context.Background(), userID)
+		_, err := client.Get(context.Background(), "users", userID)
 		if err != nil {
-			if err == olric.ErrKeyNotFound {
+			if err == db.ErrKeyNotFound {
 				http.Error(w, "User not found", http.StatusNotFound)
 				return
 			}
@@ -243,7 +207,7 @@ func DeleteUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Delete the user
-		_, err = dm.Delete(context.Background(), userID)
+		_, err = client.Delete(context.Background(), "users", userID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -257,7 +221,7 @@ func DeleteUser(client *db.Client) func(w http.ResponseWriter, r *http.Request) 
 func UserRouter(client *db.Client) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		
+
 		// Route to appropriate handler based on path and method
 		if path == "/api/users" {
 			switch r.Method {
